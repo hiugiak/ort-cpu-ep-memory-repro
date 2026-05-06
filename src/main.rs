@@ -26,7 +26,9 @@ fn main() -> ort::Result<()> {
     println!("input=noise: fresh random tensor per iteration");
     println!("intra_threads={}", config.intra_threads);
     println!("print_every={}", config.print_every);
-    println!("rss_start_mb={:.1}", rss_mb());
+    let memory = memory_snapshot();
+    println!("rss_start_mb={:.1}", memory.rss_mb);
+    println!("footprint_start_mb={:.1}", memory.footprint_mb);
 
     let started = Instant::now();
 
@@ -35,10 +37,12 @@ fn main() -> ort::Result<()> {
         run_inference(&mut session, &input)?;
 
         if iteration % config.print_every == 0 {
+            let memory = memory_snapshot();
             println!(
-                "iter={iteration}, elapsed={:.1}s, rss={:.1} MB",
+                "iter={iteration}, elapsed={:.1}s, rss={:.1} MB, footprint={:.1} MB",
                 started.elapsed().as_secs_f64(),
-                rss_mb(),
+                memory.rss_mb,
+                memory.footprint_mb,
             );
         }
     }
@@ -122,8 +126,21 @@ fn usage_and_exit(message: &str) -> ! {
     std::process::exit(2);
 }
 
+struct MemorySnapshot {
+    rss_mb: f64,
+    footprint_mb: f64,
+}
+
 #[cfg(target_os = "macos")]
-fn rss_mb() -> f64 {
+fn memory_snapshot() -> MemorySnapshot {
+    MemorySnapshot {
+        rss_mb: task_basic_rss_mb(),
+        footprint_mb: rusage_phys_footprint_mb(),
+    }
+}
+
+#[cfg(target_os = "macos")]
+fn task_basic_rss_mb() -> f64 {
     let mut info = std::mem::MaybeUninit::<libc::mach_task_basic_info>::uninit();
     let mut count = (std::mem::size_of::<libc::mach_task_basic_info>()
         / std::mem::size_of::<libc::natural_t>())
@@ -147,6 +164,25 @@ fn rss_mb() -> f64 {
 }
 
 #[cfg(target_os = "macos")]
+fn rusage_phys_footprint_mb() -> f64 {
+    let mut info = std::mem::MaybeUninit::<libc::rusage_info_v4>::uninit();
+    let result = unsafe {
+        libc::proc_pid_rusage(
+            libc::getpid(),
+            libc::RUSAGE_INFO_V4,
+            info.as_mut_ptr().cast(),
+        )
+    };
+
+    if result != 0 {
+        return f64::NAN;
+    }
+
+    let info = unsafe { info.assume_init() };
+    info.ri_phys_footprint as f64 / 1024.0 / 1024.0
+}
+
+#[cfg(target_os = "macos")]
 fn mach_task_self() -> libc::mach_port_t {
     unsafe extern "C" {
         static mach_task_self_: libc::mach_port_t;
@@ -156,6 +192,9 @@ fn mach_task_self() -> libc::mach_port_t {
 }
 
 #[cfg(not(target_os = "macos"))]
-fn rss_mb() -> f64 {
-    f64::NAN
+fn memory_snapshot() -> MemorySnapshot {
+    MemorySnapshot {
+        rss_mb: f64::NAN,
+        footprint_mb: f64::NAN,
+    }
 }

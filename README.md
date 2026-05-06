@@ -12,7 +12,7 @@ Tauri code. It only:
 - loads a public YOLOv8n ONNX object detection model
 - generates a fresh random `[1, 3, 640, 640]` `f32` tensor each iteration
 - extracts the first output tensor so the run is fully materialized
-- prints process RSS periodically
+- prints process RSS and physical footprint periodically
 
 ## Model
 
@@ -56,6 +56,12 @@ Defaults:
 
 - `intra_threads`: `1`
 - `print_every`: `100`
+
+On macOS, Activity Monitor's "Memory" column is closer to the process physical
+footprint than to `mach_task_basic_info.resident_size`. This repro prints both:
+
+- `rss`: `mach_task_basic_info.resident_size`
+- `footprint`: `proc_pid_rusage(..., RUSAGE_INFO_V4, ...).ri_phys_footprint`
 
 Example printing every 20 iterations:
 
